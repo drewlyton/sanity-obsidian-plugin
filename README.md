@@ -1,6 +1,8 @@
-# Obsidian Sanity Plugin
+# Sanity Publish for Obsidian
 
-## Getting Started
+![Obsidian logo and Sanity logo together](cover-image.png)
+
+Sanity Publish is a plugin for Obsidian that allows you to publish and sync documents from your Obsidian vault to your Sanity Studio.
 
 ### Installing the plugin
 
