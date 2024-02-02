@@ -52,7 +52,7 @@ Hitting enter will create or update a _draft_ document in your Sanity Studio. It
 
 ## 🌄 Uploading Images
 
-One convenient additional feature of Sanity Publish is the ability to upload images to Sanity from Obsidian. By right clicking on an embedded in your Obsidian document, you can click the `Upload to Sanity` menu action and automatically have your image uploaded and the content of your document changed to link to the Sanity CDN.
+One convenient additional feature of Sanity Publish is the ability to upload images to Sanity from Obsidian. By right clicking on an embedded image in your Obsidian document, you can click the `Upload to Sanity` menu action and automatically have your image uploaded and the content of your document changed to link to the Sanity CDN.
 
 This is a great thing to do right before publishing so that all of your images will be visible once they are published.
 
