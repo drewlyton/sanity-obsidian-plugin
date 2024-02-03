@@ -1,11 +1,11 @@
 import {
-	App,
 	FileSystemAdapter,
+	MarkdownEditView,
+	MarkdownView,
 	Notice,
 	Plugin,
-	PluginSettingTab,
-	Setting,
 	TFile,
+	setIcon,
 } from "obsidian";
 import matter from "gray-matter";
 import mime from "mime";
@@ -14,23 +14,11 @@ import {
 	createClient as createSanityClient,
 } from "@sanity/client";
 import { readFile } from "fs/promises";
-
-interface SanityPluginSettings {
-	apiToken: string | undefined;
-	projectId: string | undefined;
-	dataset: string;
-	sanityTypeName: string;
-	sanityTitleField?: string;
-	sanityBodyField: string;
-}
-
-const DEFAULT_SETTINGS: SanityPluginSettings = {
-	apiToken: "",
-	projectId: "",
-	dataset: "production",
-	sanityTypeName: "post",
-	sanityBodyField: "body",
-};
+import {
+	DEFAULT_SETTINGS,
+	SanityPluginSettings,
+	SanitySettingTab,
+} from "SanitySettingTab";
 
 const httpRegex =
 	/^https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)$/;
@@ -38,34 +26,38 @@ const httpRegex =
 export default class SanityPublishPlugin extends Plugin {
 	settings: SanityPluginSettings;
 	client: SanityClient;
+	statusBarButton: HTMLElement | undefined;
 
 	async onload() {
 		await this.loadSettings();
+
+		this.registerEvent(
+			this.app.workspace.on("file-open", (file) => {
+				if (!file || !(file.extension === "md")) {
+					this.removeStatusBarButton();
+					return;
+				}
+				this.addStatusBarButton(file);
+			})
+		);
 
 		this.addCommand({
 			id: "sanity-publish-command",
 			name: "Publish to Sanity",
 			checkCallback: (checking) => {
+				const activeView =
+					this.app.workspace.getActiveViewOfType(MarkdownView);
 				const activeFile = this.app.workspace.getActiveFile();
 
-				if (!activeFile) {
+				if (!activeView || !activeFile) {
 					if (checking) return false;
 					return;
 				} else if (checking) {
 					return true;
 				}
-				this.getFileData(activeFile).then(({ content, data }) => {
-					new Notice("Publishing content to Sanity...");
-					this.createorUpdateDocument({
-						content,
-						title: activeFile.basename,
-						sanityId: data?.sanity_id,
-					}).then((r) => {
-						if (r?._id) {
-							this.updateFrontmatter({ sanity_id: r._id });
-							new Notice("Succesffuly  content to Sanity!");
-						}
-					});
+
+				this.uploadAllImages().then(() => {
+					this.publishToSanity(activeFile);
 				});
 			},
 		});
@@ -110,18 +102,147 @@ export default class SanityPublishPlugin extends Plugin {
 
 	onunload() {}
 
-	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			await this.loadData()
+	addStatusBarButton(file: TFile) {
+		if (this.statusBarButton) return;
+		const statusButton = this.addStatusBarItem();
+		const iconSpan = statusButton.createEl("span");
+		setIcon(iconSpan, "file-up");
+		statusButton.createEl("span", {
+			text: "Publish",
+		});
+
+		statusButton.addClass("mod-clickable");
+		statusButton.setAttr("aria-label", "Publish to Sanity");
+		statusButton.setAttr("data-tooltip-position", "top");
+		statusButton.addEventListener("click", () =>
+			this.uploadAllImages().then(() => this.publishToSanity(file))
 		);
-		this.createClient();
+		this.statusBarButton = statusButton;
 	}
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-		this.createClient();
+	removeStatusBarButton() {
+		if (this.statusBarButton) this.statusBarButton.remove();
+		this.statusBarButton = undefined;
+	}
+
+	async uploadAllImages() {
+		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!view) return;
+		const editor = view.editor;
+		if (!editor) return;
+
+		const content = view.getViewData();
+		const lines = content.split("\n");
+		// TODO: figure out why this function is resolving before these promises do
+		await Promise.all(
+			lines.map(async (line, lineNumber) => {
+				const filePath = this.getFilePathFromLine(line);
+				if (!filePath) return;
+
+				const fileMetaData =
+					this.app.metadataCache.getFirstLinkpathDest(filePath, "");
+				if (!fileMetaData) return;
+
+				const absolutePath = this.getAbsolutePath(fileMetaData);
+				if (!absolutePath) return;
+
+				const uploadText = `![uploading file...](${filePath})`;
+				editor.setLine(lineNumber, uploadText);
+				try {
+					const value = await this.uploadFileToSanity(absolutePath);
+					const assetText = `![${value.originalFilename}](${value.url})`;
+					editor.setLine(lineNumber, assetText);
+				} catch {
+					const errorText = `![Couldn't upload file](${filePath})`;
+					editor.setLine(lineNumber, errorText);
+				}
+			})
+		);
+	}
+
+	async sleep(delay: number) {
+		return new Promise((resolve) => setTimeout(resolve, delay));
+	}
+
+	publishToSanity(activeFile: TFile) {
+		this.getViewData().then(({ content, data }) => {
+			new Notice("Publishing content to Sanity...");
+			this.createorUpdateDocument({
+				content,
+				title: activeFile.basename,
+				sanityId: data?.sanity_id,
+			})
+				.then((r) => {
+					if (r?._id) {
+						this.updateFrontmatter({ sanity_id: r._id });
+						new Notice("Successfully published content to Sanity!");
+					}
+				})
+				.catch(() => {
+					new Notice(
+						"Something went wrong when publishing to Sanity"
+					);
+				});
+		});
+	}
+
+	createClient() {
+		if (this.settings.projectId)
+			this.client = createSanityClient({
+				projectId: this.settings.projectId,
+				dataset: this.settings.dataset,
+				token: this.settings.apiToken,
+				apiVersion: "2023-05-03",
+				useCdn: true,
+			});
+	}
+
+	async uploadFileToSanity(path: string) {
+		const file = await readFile(path);
+		const fileType = mime.getType(path);
+		const response = await this.client.assets.upload(
+			fileType?.includes("image") ? "image" : "file",
+			file
+		);
+		return response;
+	}
+
+	async createorUpdateDocument({
+		title,
+		content,
+		sanityId,
+	}: {
+		title: string;
+		content: string;
+		sanityId: string;
+	}) {
+		const _type = this.settings.sanityTypeName;
+		const titleField = this.settings.sanityTitleField;
+		const bodyField = this.settings.sanityBodyField;
+		// If we have a content divider,
+		// split the content by that string
+		// return the top/first item
+		if (this.settings.contentDivider) {
+			content = content.split(this.settings.contentDivider)[0];
+		}
+		let attributes = { [bodyField]: content };
+		if (titleField) attributes[titleField] = title;
+
+		if (!this.client) throw new Error("No Sanity client present...");
+		if (!sanityId) {
+			const result = await this.client.create({
+				_type,
+				_id: `drafts.`,
+				...attributes,
+			});
+			return result;
+		}
+		const result = await this.client
+			.patch(sanityId)
+			.set(attributes)
+			.commit();
+
+		return result;
 	}
 
 	getAbsolutePath(file: TFile) {
@@ -143,64 +264,12 @@ export default class SanityPublishPlugin extends Plugin {
 		return filePath;
 	}
 
-	async uploadFileToSanity(path: string) {
-		const file = await readFile(path);
-		const fileType = mime.getType(path);
-		return await this.client.assets.upload(
-			fileType?.includes("image") ? "image" : "file",
-			file
-		);
-	}
-
-	createClient() {
-		if (this.settings.projectId)
-			this.client = createSanityClient({
-				projectId: this.settings.projectId,
-				dataset: this.settings.dataset,
-				token: this.settings.apiToken,
-				apiVersion: "2023-05-03",
-				useCdn: true,
-			});
-	}
-
-	async createorUpdateDocument({
-		title,
-		content,
-		sanityId,
-	}: {
-		title: string;
-		content: string;
-		sanityId: string;
-	}) {
-		const _type = this.settings.sanityTypeName;
-		const titleField = this.settings.sanityTitleField;
-		const bodyField = this.settings.sanityBodyField;
-		let attributes = { [bodyField]: content };
-		if (titleField) attributes[titleField] = title;
-
-		if (!this.client) throw new Error("No Sanity client present...");
-		if (!sanityId) {
-			const result = await this.client.create({
-				_type,
-				_id: `drafts.`,
-				...attributes,
-			});
-			return result;
+	async getViewData() {
+		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (activeView) {
+			return matter(activeView.getViewData());
 		}
-		const result = await this.client
-			.patch(sanityId)
-			.set(attributes)
-			.commit();
-
-		return result;
-	}
-
-	async getFileData(file: TFile) {
-		if (file) {
-			const fileText = await this.app.vault.read(file);
-			return matter(fileText);
-		}
-		throw new Error("No active file found.");
+		throw new Error("No active view available.");
 	}
 
 	async updateFrontmatter(updatedProperties: {
@@ -208,7 +277,7 @@ export default class SanityPublishPlugin extends Plugin {
 	}) {
 		const currentFile = this.app.workspace.getActiveFile();
 		if (currentFile) {
-			const { content, data } = await this.getFileData(currentFile);
+			const { content, data } = await this.getViewData();
 			const updatedFrontmatter =
 				matter
 					.stringify("", {
@@ -226,107 +295,18 @@ export default class SanityPublishPlugin extends Plugin {
 			console.error("No active file found.");
 		}
 	}
-}
 
-class SanitySettingTab extends PluginSettingTab {
-	plugin: SanityPublishPlugin;
-
-	constructor(app: App, plugin: SanityPublishPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
+	async loadSettings() {
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			await this.loadData()
+		);
+		this.createClient();
 	}
 
-	display(): void {
-		const { containerEl } = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName("Sanity API Token")
-			.setDesc(
-				"Your token must have write-access for the project you wish to publish to."
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("Enter Your Token")
-					.setValue(this.plugin.settings.apiToken || "")
-					.onChange(async (value) => {
-						this.plugin.settings.apiToken = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Project ID")
-			.setDesc("Your Sanity project's ID.")
-			.addText((text) =>
-				text
-					.setPlaceholder("Enter Your Id")
-					.setValue(this.plugin.settings.projectId || "")
-					.onChange(async (value) => {
-						this.plugin.settings.projectId = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Dataset Name")
-			.setDesc(
-				"The name of the dataset you'd like to publish to (defaults to `production`)."
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("Enter Your Dataset's Name")
-					.setValue(this.plugin.settings.dataset || "production")
-					.onChange(async (value) => {
-						this.plugin.settings.dataset = value || "production";
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Sanity Type Name")
-			.setDesc(
-				"The name of the document type you want to sync with in Sanity (defaults to 'post')."
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("Enter Your Type Name")
-					.setValue(this.plugin.settings.sanityTypeName || "post")
-					.onChange(async (value) => {
-						this.plugin.settings.sanityTypeName = value || "post";
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Sanity Title Field")
-			.setDesc(
-				"The name of the field you'd like to sync your title with (leave blank if you don't want to sync this field)."
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("Enter Your Field Name")
-					.setValue(this.plugin.settings.sanityTitleField || "")
-					.onChange(async (value) => {
-						this.plugin.settings.sanityTitleField = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Sanity Body Field")
-			.setDesc(
-				"The name of the field you'd like to sync the body of your document with (defaults to 'body')."
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("Enter Your Field Name")
-					.setValue(this.plugin.settings.sanityBodyField || "body")
-					.onChange(async (value) => {
-						this.plugin.settings.sanityBodyField = value || "body";
-						await this.plugin.saveSettings();
-					})
-			);
+	async saveSettings() {
+		await this.saveData(this.settings);
+		this.createClient();
 	}
 }
