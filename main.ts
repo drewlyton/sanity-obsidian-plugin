@@ -1,24 +1,23 @@
 import {
+	SanityClient,
+	createClient as createSanityClient,
+} from "@sanity/client";
+import {
+	DEFAULT_SETTINGS,
+	SanityPluginSettings,
+	SanitySettingTab,
+} from "SanitySettingTab";
+import { readFile } from "fs/promises";
+import matter from "gray-matter";
+import mime from "mime";
+import {
 	FileSystemAdapter,
-	MarkdownEditView,
 	MarkdownView,
 	Notice,
 	Plugin,
 	TFile,
 	setIcon,
 } from "obsidian";
-import matter from "gray-matter";
-import mime from "mime";
-import {
-	SanityClient,
-	createClient as createSanityClient,
-} from "@sanity/client";
-import { readFile } from "fs/promises";
-import {
-	DEFAULT_SETTINGS,
-	SanityPluginSettings,
-	SanitySettingTab,
-} from "SanitySettingTab";
 
 const httpRegex =
 	/^https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)$/;
