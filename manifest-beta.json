@@ -1,0 +1,10 @@
+{
+	"id": "obsidian-sanity",
+	"name": "Sanity Publish",
+	"version": "0.0.1",
+	"minAppVersion": "0.15.0",
+	"description": "Allows users to publish Obsidian documents directly to their Sanity studio.",
+	"author": "Obsidian",
+	"authorUrl": "https://www.drewis.cool",
+	"isDesktopOnly": false
+}
