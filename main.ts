@@ -56,9 +56,7 @@ export default class SanityPublishPlugin extends Plugin {
 					return true;
 				}
 
-				this.uploadAllImages().then(() => {
-					this.publishToSanity(activeFile);
-				});
+				this.publishToSanity(activeFile);
 			},
 		});
 
@@ -115,7 +113,7 @@ export default class SanityPublishPlugin extends Plugin {
 		statusButton.setAttr("aria-label", "Publish to Sanity");
 		statusButton.setAttr("data-tooltip-position", "top");
 		statusButton.addEventListener("click", () =>
-			this.uploadAllImages().then(() => this.publishToSanity(file))
+			this.publishToSanity(file)
 		);
 		this.statusBarButton = statusButton;
 	}
@@ -133,7 +131,9 @@ export default class SanityPublishPlugin extends Plugin {
 
 		const content = view.getViewData();
 		const lines = content.split("\n");
-		// TODO: figure out why this function is resolving before these promises do
+
+		new Notice("Uploading files in document...");
+
 		await Promise.all(
 			lines.map(async (line, lineNumber) => {
 				const filePath = this.getFilePathFromLine(line);
@@ -160,30 +160,30 @@ export default class SanityPublishPlugin extends Plugin {
 		);
 	}
 
-	async sleep(delay: number) {
-		return new Promise((resolve) => setTimeout(resolve, delay));
-	}
-
 	publishToSanity(activeFile: TFile) {
-		this.getViewData().then(({ content, data }) => {
-			new Notice("Publishing content to Sanity...");
-			this.createorUpdateDocument({
-				content,
-				title: activeFile.basename,
-				sanityId: data?.sanity_id,
-			})
-				.then((r) => {
-					if (r?._id) {
-						this.updateFrontmatter({ sanity_id: r._id });
-						new Notice("Successfully published content to Sanity!");
-					}
+		this.uploadAllImages().then(() =>
+			this.getActiveViewData().then(({ content, data }) => {
+				new Notice("Publishing content to Sanity...");
+				this.createorUpdateDocument({
+					content,
+					title: activeFile.basename,
+					sanityId: data?.sanity_id,
 				})
-				.catch(() => {
-					new Notice(
-						"Something went wrong when publishing to Sanity"
-					);
-				});
-		});
+					.then((r) => {
+						if (r?._id) {
+							this.updateFrontmatter({ sanity_id: r._id });
+							new Notice(
+								"Successfully published content to Sanity!"
+							);
+						}
+					})
+					.catch(() => {
+						new Notice(
+							"Something went wrong when publishing to Sanity"
+						);
+					});
+			})
+		);
 	}
 
 	createClient() {
@@ -264,7 +264,7 @@ export default class SanityPublishPlugin extends Plugin {
 		return filePath;
 	}
 
-	async getViewData() {
+	async getActiveViewData() {
 		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 		if (activeView) {
 			return matter(activeView.getViewData());
@@ -277,7 +277,7 @@ export default class SanityPublishPlugin extends Plugin {
 	}) {
 		const currentFile = this.app.workspace.getActiveFile();
 		if (currentFile) {
-			const { content, data } = await this.getViewData();
+			const { content, data } = await this.getActiveViewData();
 			const updatedFrontmatter =
 				matter
 					.stringify("", {
@@ -294,6 +294,10 @@ export default class SanityPublishPlugin extends Plugin {
 		} else {
 			console.error("No active file found.");
 		}
+	}
+
+	async sleep(delay: number) {
+		return new Promise((resolve) => setTimeout(resolve, delay));
 	}
 
 	async loadSettings() {
