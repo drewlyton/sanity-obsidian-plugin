@@ -31,6 +31,8 @@ export default class SanityPublishPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 
+		// Add status button to run publish function
+		// when markdown file changes
 		this.registerEvent(
 			this.app.workspace.on("file-open", (file) => {
 				if (!file || !(file.extension === "md")) {
@@ -63,10 +65,13 @@ export default class SanityPublishPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on("editor-menu", (menu, editor, info) => {
 				const lineNumber = editor.getCursor().line;
+				// Get the current line from line number
 				const line = editor.getLine(lineNumber);
+				// See if line is an embedded image
 				const filePath = this.getFilePathFromLine(line);
 				if (!filePath) return;
 
+				// If line is embedded image, get the path to that file
 				const fileMetaData =
 					this.app.metadataCache.getFirstLinkpathDest(filePath, "");
 				if (!fileMetaData) return;
@@ -74,6 +79,8 @@ export default class SanityPublishPlugin extends Plugin {
 				const absolutePath = this.getAbsolutePath(fileMetaData);
 				if (!absolutePath) return;
 
+				// Add menu item to right click editor menu
+				// that allows user to click to upload single image
 				menu.addItem((item) => {
 					item.setTitle("Upload to Sanity")
 						.setIcon("file-up")
@@ -101,7 +108,12 @@ export default class SanityPublishPlugin extends Plugin {
 	onunload() {}
 
 	addStatusBarButton(file: TFile) {
+		// If statusBarButton is already present
+		// don't add a new one
 		if (this.statusBarButton) return;
+
+		// Add status bar button that runs publish
+		// function when clicked
 		const statusButton = this.addStatusBarItem();
 		const iconSpan = statusButton.createEl("span");
 		setIcon(iconSpan, "file-up");
@@ -134,6 +146,9 @@ export default class SanityPublishPlugin extends Plugin {
 
 		new Notice("Uploading files in document...");
 
+		// For every new line, check if it's an embedded image
+		// if it is, upload it to Sanity and replace the text in the
+		// editor
 		await Promise.all(
 			lines.map(async (line, lineNumber) => {
 				const filePath = this.getFilePathFromLine(line);
@@ -161,6 +176,7 @@ export default class SanityPublishPlugin extends Plugin {
 	}
 
 	publishToSanity(activeFile: TFile) {
+		// Upload images and then push content to Sanity
 		this.uploadAllImages().then(() =>
 			this.getActiveViewData().then(({ content, data }) => {
 				new Notice("Publishing content to Sanity...");
@@ -225,10 +241,13 @@ export default class SanityPublishPlugin extends Plugin {
 		if (this.settings.contentDivider) {
 			content = content.split(this.settings.contentDivider)[0];
 		}
+		// Use the users field settings for the attribute names
 		let attributes = { [bodyField]: content };
 		if (titleField) attributes[titleField] = title;
 
 		if (!this.client) throw new Error("No Sanity client present...");
+
+		// If we don't have a Sanity id, create a new document
 		if (!sanityId) {
 			const result = await this.client.create({
 				_type,
@@ -237,6 +256,7 @@ export default class SanityPublishPlugin extends Plugin {
 			});
 			return result;
 		}
+		// If we do have a Sanity id, patch that document
 		const result = await this.client
 			.patch(sanityId)
 			.set(attributes)
