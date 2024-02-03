@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
-	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"name": "obsidian-sanity-plugin",
+	"version": "0.0.1",
+	"description": "A plugin for Obsidian that allows you to publish and sync documents from your Obsidian vault to your Sanity Studio.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
